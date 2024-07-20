@@ -1,5 +1,16 @@
-from pytree.cli import make_tree
+from pathlib import Path
+import pytest
 
+from pytree.cli import Tree
+
+pytree_ignore_path = Path(__file__).parent.parent/'pytree/.pytreeignore'
+
+@pytest.fixture
+def pytree_ignore(fs):
+    fs.add_real_file(pytree_ignore_path)
+    yield fs
+
+@pytest.mark.usefixtures("pytree_ignore")
 def test_main(fs):
     exp = """
  var/
@@ -19,10 +30,11 @@ def test_main(fs):
     fs.create_file('/var/other/yy1.txt')
     fs.create_file('/var/.idea/zz1.txt')
     fs.create_file('/var/.gitignore')
-    output = make_tree('/var')
+    output = Tree('/var', sort=True).build().stringify()
     assert output.strip() == exp
 
-def test_exclude(fs):
+@pytest.mark.usefixtures("pytree_ignore")
+def test_ignore(fs):
     fs.create_file('/var/data/xx1.txt')
     fs.create_file('/var/data/xx2.txt')
     fs.create_file('/var/data/more/xx3.txt')
@@ -30,27 +42,35 @@ def test_exclude(fs):
     fs.create_file('/var/other/.idea/foo.bar')
 
     # Exclude entire folder
-    exclude = ['*/data']
+    ignore = ['*/data']
     exp = """
 var/
   └── other/
       └── yy1.txt
       """.strip()
-    output = make_tree('/var', exclude_patterns=exclude)
+    output = Tree('/var', sort=True, ignore_patterns=ignore).build().stringify()
     assert output.strip() == exp
 
-    # Exclude contents but keep folder name
-    exclude = ['*/data/*']
+@pytest.mark.usefixtures("pytree_ignore")
+def test_ignore_keep_folder_name(fs):
+    fs.create_file('/var/data/xx1.txt')
+    fs.create_file('/var/data/xx2.txt')
+    fs.create_file('/var/data/more/xx3.txt')
+    fs.create_file('/var/other/yy1.txt')
+    fs.create_file('/var/other/.idea/foo.bar')
+
+    ignore = ['*/data/*', '!*/data/']
     exp = """
 var/
   ├── data/
   └── other/
       └── yy1.txt
       """.strip()
-    output = make_tree('/var', exclude_patterns=exclude)
+    output = Tree('/var', ignore_patterns=ignore, sort=True).build().stringify()
     assert output.strip() == exp
 
 
+@pytest.mark.usefixtures("pytree_ignore")
 def test_style(fs):
     fs.create_file('/var/data/xx1.txt')
     fs.create_file('/var/other/yy1.txt')
@@ -61,6 +81,14 @@ var/
   ╚══ other/
       ╚══ yy1.txt
     """.strip()
-    output = make_tree('/var', style='double')
+    output = Tree('/var', sort=True, style='double').build().stringify()
     assert output.strip() == exp
+
+@pytest.mark.usefixtures("pytree_ignore")
+def test_pytree_ignore(fs):
+    fs.create_file('/var/venv/Scripts/activate.bat')
+    fs.create_file('/venv/Scripts/activate.bat')
+    fs.create_file('/var/data/xx1.txt')
+    output = Tree('/var', sort=True).build().stringify()
+    print(output)
 
