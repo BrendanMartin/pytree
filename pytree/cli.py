@@ -45,12 +45,15 @@ class Tree:
     def __init__(
             self,
             path: str | Path,
+            is_dir: bool = False,
             ignore_patterns=None,
             ignore_file: str | Path | None = 'default',
             sort=False,
             style: Style | Literal['normal', 'heavy', 'double'] = 'normal'
     ):
         self.path = Path(path) if isinstance(path, str) else path
+        self.resolved_path = self.path.resolve().as_posix()
+        self.is_dir = is_dir
         self.children: list[Tree] = []
         self.ignore_patterns = ignore_patterns or []
         self.ignore_file = ignore_file
@@ -84,27 +87,29 @@ class Tree:
             else:
                 self.exclude_patterns.append(pat)
 
-    def should_ignore(self, path: Path):
-        def check_pattern(path: Path, pat: str) -> bool:
-            dir_name = path.name + '/' if path.is_dir() else ''
-            dir_path = path.as_posix() + '/' if path.is_dir() else ''
+    def should_ignore(self, path: Path, is_dir: bool):
+        def check_pattern(name: str, resolved_path, pat: str) -> bool:
+            dir_name = name + '/' if is_dir else ''
+            dir_path = resolved_path + '/' if is_dir else ''
             if '/' in pat:
-                ignore = fnmatch(path.as_posix(), pat) or fnmatch(dir_path, pat)
+                ignore = fnmatch(resolved_path, pat) or fnmatch(dir_path, pat)
             else:
-                ignore = fnmatch(path.name, pat) or fnmatch(dir_name, pat)
+                ignore = fnmatch(name, pat) or fnmatch(dir_name, pat)
             if ignore:
                 return True
 
+        name = path.name
+        resolved_path = path.resolve().as_posix()
         ignore = False
         for pat in self.exclude_patterns:
-            ignore = check_pattern(path, pat)
+            ignore = check_pattern(name, resolved_path, pat)
             if ignore:
                 break
 
         negate = False
         if ignore:
             for pat in self.negate_patterns:
-                negate = check_pattern(path, pat)
+                negate = check_pattern(name, resolved_path, pat)
                 if negate:
                     break
 
@@ -112,19 +117,21 @@ class Tree:
 
     def build(self):
         contents = Path(self.path).iterdir()
+
         if self.sort:
             contents = sorted(contents)
 
         for item in contents:
-            if self.should_ignore(item):
+            is_dir = item.is_dir()
+            if self.should_ignore(item, is_dir):
                 continue
 
-            subtree = Tree(item, sort=self.sort, style=self.style)
+            subtree = Tree(item, is_dir=is_dir, sort=self.sort, style=self.style)
             subtree.exclude_patterns = self.exclude_patterns
             subtree.negate_patterns = self.negate_patterns
 
             self.children.append(subtree)
-            if item.is_dir():
+            if is_dir:
                 subtree.build()
         return self
 
@@ -158,7 +165,7 @@ def main():
     parser.add_argument("directory", nargs="?", default=".",
                         help="Directory to start from (default: current directory)")
     parser.add_argument("-i", "--ignore", nargs="+", default=[], help="Ignore folders and files using glob patterns")
-    parser.add_argument('-s', '--sort', default=False, help="Sort directory contents alphabetically")
+    parser.add_argument('-s', '--sort', action='store_true', default=False, help="Sort directory contents alphabetically")
     parser.add_argument('-st', '--style', default='normal', choices=['normal', 'heavy', 'double'],
                         help='The style of lines to draw')
     args = parser.parse_args()
