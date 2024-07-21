@@ -8,6 +8,7 @@ from typing import Literal
 class Style:
     pass
 
+
 @dataclass
 class StyleNormal(Style):
     straight: str = '│'
@@ -39,8 +40,6 @@ styles = {
 }
 
 
-
-
 class Tree:
     def __init__(
             self,
@@ -48,17 +47,20 @@ class Tree:
             is_dir: bool = False,
             ignore_patterns=None,
             ignore_file: str | Path | None = 'default',
+            collapse_patterns=None,
+            collapse_ellipses=False,
             sort=False,
             style: Style | Literal['normal', 'heavy', 'double'] = 'normal'
     ):
         self.path = Path(path) if isinstance(path, str) else path
-        self.resolved_path = self.path.resolve().as_posix()
         self.is_dir = is_dir
         self.children: list[Tree] = []
         self.ignore_patterns = ignore_patterns or []
         self.ignore_file = ignore_file
         self.exclude_patterns = []
         self.negate_patterns = []
+        self.collapse_patterns = collapse_patterns or []
+        self.collapse_ellipses = collapse_ellipses
         self.init_patterns()
         self.sort = sort
         self.style = styles[style] if isinstance(style, str) else style
@@ -87,35 +89,46 @@ class Tree:
             else:
                 self.exclude_patterns.append(pat)
 
-    def should_ignore(self, path: Path, is_dir: bool):
-        def check_pattern(name: str, resolved_path, pat: str) -> bool:
-            dir_name = name + '/' if is_dir else ''
-            dir_path = resolved_path + '/' if is_dir else ''
-            if '/' in pat:
-                ignore = fnmatch(resolved_path, pat) or fnmatch(dir_path, pat)
-            else:
-                ignore = fnmatch(name, pat) or fnmatch(dir_name, pat)
-            if ignore:
-                return True
+    def check_pattern(self, name: str, resolved_path, is_dir, pat: str) -> bool:
+        dir_name = name + '/' if is_dir else ''
+        dir_path = resolved_path + '/' if is_dir else ''
+        if '/' in pat:
+            ignore = fnmatch(resolved_path, pat) \
+                     or fnmatch(dir_path, pat) \
+                     or fnmatch(dir_name, pat)
+        else:
+            ignore = fnmatch(name, pat) or fnmatch(dir_name, pat)
+        if ignore:
+            return True
 
+    def should_ignore(self, path: Path, resolved_path: str, is_dir: bool):
         name = path.name
-        resolved_path = path.resolve().as_posix()
         ignore = False
         for pat in self.exclude_patterns:
-            ignore = check_pattern(name, resolved_path, pat)
+            ignore = self.check_pattern(name, resolved_path, is_dir, pat)
             if ignore:
                 break
 
         negate = False
         if ignore:
             for pat in self.negate_patterns:
-                negate = check_pattern(name, resolved_path, pat)
+                negate = self.check_pattern(name, resolved_path, is_dir, pat)
                 if negate:
                     break
-
         return ignore and not negate
 
-    def build(self):
+    def should_collapse(self, path: Path, resolved_path: str):
+        name = path.name
+        for pat in self.collapse_patterns:
+            if self.check_pattern(name, resolved_path, True, pat):
+                return True
+
+    def build(self, collapse=False):
+        if collapse:
+            if self.collapse_ellipses:
+                self.children.append(Tree('...', is_dir=False, style=self.style))
+            return
+
         contents = Path(self.path).iterdir()
 
         if self.sort:
@@ -123,16 +136,20 @@ class Tree:
 
         for item in contents:
             is_dir = item.is_dir()
-            if self.should_ignore(item, is_dir):
+            resolved_path = item.resolve().as_posix()
+            if self.should_ignore(item, resolved_path, is_dir):
                 continue
 
             subtree = Tree(item, is_dir=is_dir, sort=self.sort, style=self.style)
             subtree.exclude_patterns = self.exclude_patterns
             subtree.negate_patterns = self.negate_patterns
+            subtree.collapse_patterns = self.collapse_patterns
+            subtree.collapse_ellipses = self.collapse_ellipses
 
             self.children.append(subtree)
             if is_dir:
-                subtree.build()
+                should_collapse = self.should_collapse(item, resolved_path)
+                subtree.build(should_collapse)
         return self
 
     def stringify(self):
@@ -147,7 +164,7 @@ class Tree:
                     this_line.append(self.style.elbow)
                     next_line.append(self.style.space * 4)
 
-                if child.path.is_dir():
+                if child.is_dir:
                     this_line.append(f' {child.path.name}/')
                     all_lines.append(''.join(this_line))
                     walk(child, all_lines, next_line)
@@ -155,8 +172,10 @@ class Tree:
                     this_line.append(f' {child.path.name}')
                     all_lines.append(''.join(this_line))
 
-        all_lines = ['\n' + self.path.name.lstrip('/') + '/']
-        walk(self, all_lines, ['  '])
+        root_name = self.path.name or self.path.resolve().name
+        root_name = root_name.lstrip('/') + '/'
+        all_lines = ['\n' + root_name]
+        walk(self, all_lines, [])
         return '\n'.join(all_lines)
 
 
@@ -165,7 +184,11 @@ def main():
     parser.add_argument("directory", nargs="?", default=".",
                         help="Directory to start from (default: current directory)")
     parser.add_argument("-i", "--ignore", nargs="+", default=[], help="Ignore folders and files using glob patterns")
-    parser.add_argument('-s', '--sort', action='store_true', default=False, help="Sort directory contents alphabetically")
+    parser.add_argument("-c", "--collapse", nargs="+", default=[], help="Collapse folders using glob patterns")
+    parser.add_argument("-e", "--ellipses", action='store_true', default=False,
+                        help="Show ellipses for collapsed folder's file contents")
+    parser.add_argument('-s', '--sort', action='store_true', default=False,
+                        help="Sort directory contents alphabetically")
     parser.add_argument('-st', '--style', default='normal', choices=['normal', 'heavy', 'double'],
                         help='The style of lines to draw')
     args = parser.parse_args()
@@ -173,9 +196,12 @@ def main():
     output = Tree(
             path=args.directory,
             ignore_patterns=args.ignore,
+            collapse_patterns=args.collapse,
+            collapse_ellipses=args.ellipses,
             sort=args.sort,
             style=args.style
     ).build().stringify()
+
     print(output)
 
 

@@ -1,7 +1,8 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="pytree",
+    name="pytree-cli",
+    url="https://github.com/BrendanMartin/pytree",
     version="0.1",
     packages=find_packages(),
     install_requires=[],
@@ -16,4 +17,5 @@ setup(
     long_description="This tool prints a directory tree structure and allows excluding specific directory contents.",
     license="MIT",
     keywords="tree directory structure",
+
 )
